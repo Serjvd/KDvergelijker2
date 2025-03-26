@@ -1,5 +1,5 @@
 """
-Module voor het vergelijken van twee kwalificatiedossiers.
+Module voor het vergelijken van twee kwalificatiedossiers met verbeterde werkprocesherkenning.
 """
 import re
 from typing import Dict, List, Tuple, Any
@@ -19,7 +19,8 @@ class DossierComparator:
         self.oud_data = oud_data
         self.nieuw_data = nieuw_data
         self.comparison_results = []
-        self.matched_werkprocessen = set()  # Houdt bij welke werkprocessen al gematcht zijn
+        self.matched_oud_werkprocessen = set()  # Houdt bij welke oude werkprocessen al gematcht zijn
+        self.matched_nieuw_werkprocessen = set()  # Houdt bij welke nieuwe werkprocessen al gematcht zijn
         
     def compare_all(self) -> List[Dict]:
         """
@@ -30,7 +31,8 @@ class DossierComparator:
         """
         # Reset resultaten
         self.comparison_results = []
-        self.matched_werkprocessen = set()
+        self.matched_oud_werkprocessen = set()
+        self.matched_nieuw_werkprocessen = set()
         
         # Vergelijk metadata
         self._compare_metadata()
@@ -38,8 +40,8 @@ class DossierComparator:
         # Vergelijk kerntaken
         self._compare_kerntaken()
         
-        # Vergelijk werkprocessen
-        self._compare_werkprocessen()
+        # Vergelijk werkprocessen met verbeterde logica
+        self._compare_werkprocessen_improved()
         
         # Vergelijk context, beroepshouding en resultaat
         self._compare_text_sections()
@@ -125,96 +127,178 @@ class DossierComparator:
                 "pagina": "6"
             })
     
-    def _compare_werkprocessen(self):
-        """Vergelijkt de werkprocessen van beide dossiers."""
-        # Maak dictionaries van werkprocessen voor snellere lookup
-        oud_werkprocessen = {wp["code"]: wp for wp in self.oud_data["werkprocessen"]}
-        nieuw_werkprocessen = {wp["code"]: wp for wp in self.nieuw_data["werkprocessen"]}
+    def _compare_werkprocessen_improved(self):
+        """
+        Vergelijkt werkprocessen met verbeterde logica die beter rekening houdt met 
+        verschuivingen in codering en exacte tekstmatches.
+        """
+        # Maak lijsten en dictionaries voor werkprocessen
+        oud_werkprocessen = self.oud_data["werkprocessen"]
+        nieuw_werkprocessen = self.nieuw_data["werkprocessen"]
         
-        # Stap 1: Vergelijk werkprocessen met dezelfde code
-        for code in set(oud_werkprocessen.keys()).intersection(set(nieuw_werkprocessen.keys())):
-            oud_wp = oud_werkprocessen[code]
-            nieuw_wp = nieuw_werkprocessen[code]
-            
-            if oud_wp["naam"] != nieuw_wp["naam"]:
-                impact = f"Naamswijziging: {self._describe_text_change(oud_wp['naam'], nieuw_wp['naam'])}"
-            else:
-                impact = "Geen wijziging in naam of codering"
-            
-            self.comparison_results.append({
-                "codering_oud": code,
-                "naam_oud": oud_wp["naam"],
-                "codering_nieuw": code,
-                "naam_nieuw": nieuw_wp["naam"],
-                "impact": impact,
-                "pagina": "7-14"
-            })
-            
-            # Markeer deze werkprocessen als gematcht
-            self.matched_werkprocessen.add(code)
+        # Maak dictionaries voor snellere lookup
+        oud_wp_by_code = {wp["code"]: wp for wp in oud_werkprocessen}
+        nieuw_wp_by_code = {wp["code"]: wp for wp in nieuw_werkprocessen}
         
-        # Stap 2: Zoek naar werkprocessen die van codering zijn veranderd maar inhoudelijk hetzelfde zijn
-        # Maak lijsten van nog niet gematchte werkprocessen
-        unmatched_oud = {code: wp for code, wp in oud_werkprocessen.items() if code not in self.matched_werkprocessen}
-        unmatched_nieuw = {code: wp for code, wp in nieuw_werkprocessen.items() if code not in self.matched_werkprocessen}
-        
-        # Voor elk oud werkproces, zoek de beste match in de nieuwe werkprocessen
-        for oud_code, oud_wp in list(unmatched_oud.items()):
-            best_match_code = None
-            best_match_score = 0.0
-            best_match_naam = ""
+        # Maak dictionaries voor lookup op naam
+        oud_wp_by_naam = {}
+        for wp in oud_werkprocessen:
+            if wp["naam"] not in oud_wp_by_naam:
+                oud_wp_by_naam[wp["naam"]] = []
+            oud_wp_by_naam[wp["naam"]].append(wp)
             
-            for nieuw_code, nieuw_wp in unmatched_nieuw.items():
-                # Bereken similariteitsscore tussen de namen
+        nieuw_wp_by_naam = {}
+        for wp in nieuw_werkprocessen:
+            if wp["naam"] not in nieuw_wp_by_naam:
+                nieuw_wp_by_naam[wp["naam"]] = []
+            nieuw_wp_by_naam[wp["naam"]].append(wp)
+        
+        # STAP 1: Match werkprocessen met exact dezelfde naam (prioriteit boven codering)
+        for oud_wp in oud_werkprocessen:
+            if oud_wp["code"] in self.matched_oud_werkprocessen:
+                continue
+                
+            if oud_wp["naam"] in nieuw_wp_by_naam:
+                # Er zijn nieuwe werkprocessen met dezelfde naam
+                for nieuw_wp in nieuw_wp_by_naam[oud_wp["naam"]]:
+                    if nieuw_wp["code"] in self.matched_nieuw_werkprocessen:
+                        continue
+                        
+                    # We hebben een match op naam gevonden
+                    oud_code = oud_wp["code"]
+                    nieuw_code = nieuw_wp["code"]
+                    
+                    if oud_code == nieuw_code:
+                        impact = "Geen wijziging in naam of codering"
+                    else:
+                        impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_code} naar {nieuw_code}"
+                    
+                    self.comparison_results.append({
+                        "codering_oud": oud_code,
+                        "naam_oud": oud_wp["naam"],
+                        "codering_nieuw": nieuw_code,
+                        "naam_nieuw": nieuw_wp["naam"],
+                        "impact": impact,
+                        "pagina": "7-14"
+                    })
+                    
+                    # Markeer als gematcht
+                    self.matched_oud_werkprocessen.add(oud_code)
+                    self.matched_nieuw_werkprocessen.add(nieuw_code)
+                    break  # Ga naar het volgende oude werkproces
+        
+        # STAP 2: Zoek naar patronen van verschuiving in codering
+        # Analyseer de niet-gematchte werkprocessen om patronen te vinden
+        unmatched_oud = [wp for wp in oud_werkprocessen if wp["code"] not in self.matched_oud_werkprocessen]
+        unmatched_nieuw = [wp for wp in nieuw_werkprocessen if wp["code"] not in self.matched_nieuw_werkprocessen]
+        
+        # Sorteer op code om patronen gemakkelijker te detecteren
+        unmatched_oud.sort(key=lambda wp: wp["code"])
+        unmatched_nieuw.sort(key=lambda wp: wp["code"])
+        
+        # Zoek naar verschuivingspatronen (bijv. B1-K1-W5 -> B1-K1-W6)
+        for oud_wp in unmatched_oud:
+            if oud_wp["code"] in self.matched_oud_werkprocessen:
+                continue
+                
+            # Extraheer kerntaak en werkproces nummer
+            oud_match = re.match(r'(B\d+-K\d+)-W(\d+)', oud_wp["code"])
+            if not oud_match:
+                continue
+                
+            oud_kerntaak = oud_match.group(1)
+            oud_wp_num = int(oud_match.group(2))
+            
+            # Zoek naar potentiÃ«le verschuivingen (Â±1, Â±2, Â±3)
+            for offset in [1, 2, 3, -1, -2, -3]:
+                nieuw_wp_num = oud_wp_num + offset
+                nieuw_code = f"{oud_kerntaak}-W{nieuw_wp_num}"
+                
+                if nieuw_code in nieuw_wp_by_code and nieuw_code not in self.matched_nieuw_werkprocessen:
+                    nieuw_wp = nieuw_wp_by_code[nieuw_code]
+                    
+                    # Bereken similariteit
+                    similarity = Levenshtein.ratio(oud_wp["naam"].lower(), nieuw_wp["naam"].lower())
+                    
+                    # Als er een goede match is of als de namen exact hetzelfde zijn
+                    if similarity > 0.7 or oud_wp["naam"] == nieuw_wp["naam"]:
+                        if oud_wp["naam"] == nieuw_wp["naam"]:
+                            impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_wp['code']} naar {nieuw_code}"
+                        else:
+                            impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_wp['code']} naar {nieuw_code}. "
+                            impact += f"Naamswijziging: {self._describe_text_change(oud_wp['naam'], nieuw_wp['naam'])}"
+                        
+                        self.comparison_results.append({
+                            "codering_oud": oud_wp["code"],
+                            "naam_oud": oud_wp["naam"],
+                            "codering_nieuw": nieuw_code,
+                            "naam_nieuw": nieuw_wp["naam"],
+                            "impact": impact,
+                            "pagina": "7-14"
+                        })
+                        
+                        # Markeer als gematcht
+                        self.matched_oud_werkprocessen.add(oud_wp["code"])
+                        self.matched_nieuw_werkprocessen.add(nieuw_code)
+                        break  # Ga naar het volgende oude werkproces
+        
+        # STAP 3: Voor de resterende werkprocessen, zoek de beste match op basis van tekstuele overeenkomst
+        for oud_wp in oud_werkprocessen:
+            if oud_wp["code"] in self.matched_oud_werkprocessen:
+                continue
+                
+            best_match = None
+            best_score = 0.5  # Verhoogde drempelwaarde voor betere matches
+            
+            for nieuw_wp in nieuw_werkprocessen:
+                if nieuw_wp["code"] in self.matched_nieuw_werkprocessen:
+                    continue
+                    
                 score = Levenshtein.ratio(oud_wp["naam"].lower(), nieuw_wp["naam"].lower())
                 
-                # Als de score beter is dan de huidige beste match
-                if score > best_match_score and score > 0.6:  # Verlaagde drempelwaarde voor betere matching
-                    best_match_score = score
-                    best_match_code = nieuw_code
-                    best_match_naam = nieuw_wp["naam"]
+                if score > best_score:
+                    best_score = score
+                    best_match = nieuw_wp
             
-            # Als een goede match is gevonden
-            if best_match_code:
-                impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_code} naar {best_match_code}"
-                if oud_wp["naam"] != best_match_naam:
-                    impact += f". Naamswijziging: {self._describe_text_change(oud_wp['naam'], best_match_naam)}"
+            if best_match:
+                if oud_wp["naam"] == best_match["naam"]:
+                    impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_wp['code']} naar {best_match['code']}"
+                else:
+                    impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_wp['code']} naar {best_match['code']}. "
+                    impact += f"Naamswijziging: {self._describe_text_change(oud_wp['naam'], best_match['naam'])}"
                 
                 self.comparison_results.append({
-                    "codering_oud": oud_code,
+                    "codering_oud": oud_wp["code"],
                     "naam_oud": oud_wp["naam"],
-                    "codering_nieuw": best_match_code,
-                    "naam_nieuw": best_match_naam,
+                    "codering_nieuw": best_match["code"],
+                    "naam_nieuw": best_match["naam"],
                     "impact": impact,
                     "pagina": "7-14"
                 })
                 
-                # Markeer deze werkprocessen als gematcht
-                self.matched_werkprocessen.add(oud_code)
-                self.matched_werkprocessen.add(best_match_code)
+                # Markeer als gematcht
+                self.matched_oud_werkprocessen.add(oud_wp["code"])
+                self.matched_nieuw_werkprocessen.add(best_match["code"])
+            else:
+                # Geen match gevonden, werkproces is verwijderd
+                self.comparison_results.append({
+                    "codering_oud": oud_wp["code"],
+                    "naam_oud": oud_wp["naam"],
+                    "codering_nieuw": "-",
+                    "naam_nieuw": "-",
+                    "impact": "Werkproces verwijderd in het nieuwe dossier",
+                    "pagina": "7-14"
+                })
+        
+        # STAP 4: Voeg de overgebleven nieuwe werkprocessen toe als toegevoegd
+        for nieuw_wp in nieuw_werkprocessen:
+            if nieuw_wp["code"] in self.matched_nieuw_werkprocessen:
+                continue
                 
-                # Verwijder de gematchte werkprocessen uit de unmatched lijsten
-                del unmatched_oud[oud_code]
-                del unmatched_nieuw[best_match_code]
-        
-        # Stap 3: Verwerk de overgebleven niet-gematchte werkprocessen
-        # Voeg de overgebleven oude werkprocessen toe als verwijderd
-        for oud_code, oud_wp in unmatched_oud.items():
-            self.comparison_results.append({
-                "codering_oud": oud_code,
-                "naam_oud": oud_wp["naam"],
-                "codering_nieuw": "-",
-                "naam_nieuw": "-",
-                "impact": "Werkproces verwijderd in het nieuwe dossier",
-                "pagina": "7-14"
-            })
-        
-        # Voeg de overgebleven nieuwe werkprocessen toe als toegevoegd
-        for nieuw_code, nieuw_wp in unmatched_nieuw.items():
             self.comparison_results.append({
                 "codering_oud": "-",
                 "naam_oud": "-",
-                "codering_nieuw": nieuw_code,
+                "codering_nieuw": nieuw_wp["code"],
                 "naam_nieuw": nieuw_wp["naam"],
                 "impact": "Nieuw werkproces toegevoegd in het nieuwe dossier",
                 "pagina": "7-14"
@@ -286,6 +370,21 @@ class DossierComparator:
             "pagina": "7-9"
         })
     
+    def _has_similar_item(self, target: str, candidates: List[str], threshold: float = 0.8) -> bool:
+        """
+        Controleert of er een vergelijkbaar item bestaat in een lijst van kandidaten.
+        
+        Args:
+            target: De string waarvoor een match gezocht wordt
+            candidates: Lijst van kandidaat-strings
+            threshold: Minimale similariteitsscore om als match te beschouwen
+            
+        Returns:
+            Boolean die aangeeft of er een vergelijkbaar item is gevonden
+        """
+        best_match, score = self._find_best_match(target, candidates)
+        return score >= threshold
+    
     def _find_best_match(self, target: str, candidates: List[str]) -> Tuple[str, float]:
         """
         Vindt de beste match voor een string in een lijst van kandidaten.
@@ -312,21 +411,6 @@ class DossierComparator:
                 best_match = candidate
                 
         return best_match, best_score
-    
-    def _has_similar_item(self, target: str, candidates: List[str], threshold: float = 0.8) -> bool:
-        """
-        Controleert of er een vergelijkbaar item bestaat in een lijst van kandidaten.
-        
-        Args:
-            target: De string waarvoor een match gezocht wordt
-            candidates: Lijst van kandidaat-strings
-            threshold: Minimale similariteitsscore om als match te beschouwen
-            
-        Returns:
-            Boolean die aangeeft of er een vergelijkbaar item is gevonden
-        """
-        best_match, score = self._find_best_match(target, candidates)
-        return score >= threshold
     
     def _describe_text_change(self, old_text: str, new_text: str) -> str:
         """
