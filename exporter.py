@@ -1,88 +1,124 @@
 """
-Module voor het exporteren van vergelijkingsresultaten naar Excel en CSV.
+Module voor het exporteren van vergelijkingsresultaten naar Excel-formaat.
 """
 import os
 import pandas as pd
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+
 
 class ExcelExporter:
-    """Klasse voor het exporteren van vergelijkingsresultaten naar Excel en CSV."""
+    """Klasse voor het exporteren van vergelijkingsresultaten naar Excel-formaat."""
     
     def __init__(self, output_dir: str = "output"):
         """
         Initialiseert de ExcelExporter met een output directory.
         
         Args:
-            output_dir: Directory waar de output bestanden worden opgeslagen
+            output_dir: Directory waar de Excel-bestanden worden opgeslagen
         """
         self.output_dir = output_dir
-        
-        # Maak output directory als deze nog niet bestaat
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        os.makedirs(output_dir, exist_ok=True)
     
-    def export_to_excel(self, comparison_results: List[Dict[str, Any]], prefix: str = "kwalificatiedossier") -> Dict[str, str]:
+    def export_to_excel(self, 
+                        comparison_results: List[Dict[str, Any]], 
+                        filename: str = "Vergelijking_kwalificatiedossiers.xlsx") -> str:
         """
-        Exporteert vergelijkingsresultaten naar Excel en CSV.
+        Exporteert vergelijkingsresultaten naar een Excel-bestand.
         
         Args:
             comparison_results: Lijst van dictionaries met vergelijkingsresultaten
-            prefix: Prefix voor de bestandsnaam
+            filename: Naam van het Excel-bestand
             
         Returns:
-            Dictionary met paden naar de gegenereerde bestanden
+            Pad naar het aangemaakte Excel-bestand
         """
-        # Sorteer de resultaten alfabetisch op codering_nieuw
-        sorted_results = sorted(comparison_results, key=lambda x: x.get("codering_nieuw", ""))
+        # Maak een DataFrame van de vergelijkingsresultaten
+        df = pd.DataFrame(comparison_results)
         
-        # Maak een DataFrame van de resultaten
-        df = pd.DataFrame(sorted_results)
+        # Zorg ervoor dat de kolommen in de juiste volgorde staan
+        columns = [
+            "codering_oud", "naam_oud", "codering_nieuw", 
+            "naam_nieuw", "impact", "pagina"
+        ]
         
-        # Hernoem de kolommen voor betere leesbaarheid
-        df = df.rename(columns={
+        # Hernoem kolommen naar gebruiksvriendelijke namen
+        column_mapping = {
             "codering_oud": "Codering OUD",
             "naam_oud": "Naam OUD",
             "codering_nieuw": "Codering NIEUW",
             "naam_nieuw": "Naam NIEUW",
             "impact": "Impact op inhoud",
             "pagina": "Pagina"
-        })
+        }
         
-        # Bepaal de bestandspaden
-        excel_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.xlsx")
-        csv_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.csv")
+        # Selecteer en hernoem kolommen
+        if all(col in df.columns for col in columns):
+            df = df[columns].rename(columns=column_mapping)
         
-        try:
-            # Poging 1: Gebruik ExcelWriter met engine specificatie
-            try:
-                with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='Vergelijking')
-            except Exception as e1:
-                print(f"Eerste poging mislukt: {str(e1)}")
-                
-                # Poging 2: Directe export met engine specificatie
-                try:
-                    df.to_excel(excel_path, index=False, engine='openpyxl')
-                except Exception as e2:
-                    print(f"Tweede poging mislukt: {str(e2)}")
-                    
-                    # Poging 3: Gebruik xlsxwriter engine
-                    try:
-                        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-                            df.to_excel(writer, index=False)
-                    except Exception as e3:
-                        print(f"Derde poging mislukt: {str(e3)}")
-                        
-                        # Fallback: Sla alleen op als CSV
-                        print("Excel export mislukt, alleen CSV wordt opgeslagen")
-        except Exception as e:
-            print(f"Excel export mislukt: {str(e)}")
-            print("Alleen CSV wordt opgeslagen")
+        # Bepaal het volledige pad
+        output_path = os.path.join(self.output_dir, filename)
         
-        # Exporteer naar CSV (dit zou altijd moeten werken)
+        # Exporteer naar Excel
+        df.to_excel(output_path, index=False)
+        
+        # Exporteer ook naar CSV voor extra compatibiliteit
+        csv_path = output_path.replace('.xlsx', '.csv')
         df.to_csv(csv_path, index=False, sep=';')
         
-        return {
-            "excel": excel_path if os.path.exists(excel_path) else None,
-            "csv": csv_path
-        }
+        return output_path
+    
+    def format_excel(self, 
+                    excel_path: str, 
+                    add_filters: bool = True, 
+                    auto_column_width: bool = True) -> str:
+        """
+        Voegt opmaak toe aan een bestaand Excel-bestand.
+        
+        Args:
+            excel_path: Pad naar het Excel-bestand
+            add_filters: Of filters moeten worden toegevoegd
+            auto_column_width: Of kolombreedtes automatisch moeten worden aangepast
+            
+        Returns:
+            Pad naar het opgemaakte Excel-bestand
+        """
+        try:
+            # Laad het workbook
+            wb = pd.ExcelFile(excel_path)
+            
+            # Lees het eerste werkblad
+            df = pd.read_excel(wb, sheet_name=0)
+            
+            # Maak een ExcelWriter object met openpyxl engine
+            writer = pd.ExcelWriter(excel_path, engine='openpyxl')
+            
+            # Schrijf de DataFrame terug naar Excel
+            df.to_excel(writer, index=False, sheet_name='Vergelijking')
+            
+            # Haal het werkblad op
+            worksheet = writer.sheets['Vergelijking']
+            
+            # Voeg filters toe
+            if add_filters:
+                worksheet.auto_filter.ref = worksheet.dimensions
+            
+            # Pas kolombreedtes aan
+            if auto_column_width:
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    
+                    for cell in column:
+                        if cell.value:
+                            max_length = max(max_length, len(str(cell.value)))
+                    
+                    adjusted_width = (max_length + 2) * 1.2
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+            # Sla het bestand op
+            writer.close()
+            
+            return excel_path
+        except Exception as e:
+            print(f"Fout bij het formatteren van Excel-bestand: {str(e)}")
+            return excel_path
