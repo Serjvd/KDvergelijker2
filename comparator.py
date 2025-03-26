@@ -81,12 +81,16 @@ class DossierComparator:
     
     def _compare_metadata(self):
         """Vergelijkt de metadata van beide dossiers."""
+        # Haal de namen van de dossiers op uit de metadata
+        oud_naam_dossier = self.oud_data["metadata"].get("naam_dossier", "Kwalificatiedossier")
+        nieuw_naam_dossier = self.nieuw_data["metadata"].get("naam_dossier", "Kwalificatiedossier")
+        
         # Vergelijk crebonummer dossier
         self.comparison_results.append({
             "codering_oud": self.oud_data["metadata"]["crebonr_dossier"],
-            "naam_oud": "Particuliere beveiliging",
+            "naam_oud": oud_naam_dossier,
             "codering_nieuw": self.nieuw_data["metadata"]["crebonr_dossier"],
-            "naam_nieuw": "Particuliere beveiliging",
+            "naam_nieuw": nieuw_naam_dossier,
             "impact": f"Wijziging van crebonummer van het kwalificatiedossier",
             "pagina": "1"
         })
