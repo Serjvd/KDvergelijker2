@@ -57,6 +57,7 @@ class PDFExtractor:
         metadata = {
             "filename": self.filename,
             "crebonr_dossier": self._extract_crebonr_dossier(),
+            "naam_dossier": self._extract_naam_dossier(),
             "crebonr_kwalificatie": self._extract_crebonr_kwalificatie(),
             "naam_kwalificatie": self._extract_naam_kwalificatie(),
             "versie": self._extract_versie(),
@@ -68,9 +69,25 @@ class PDFExtractor:
     
     def _extract_crebonr_dossier(self) -> str:
         """Extraheert het crebonummer van het kwalificatiedossier."""
-        pattern = r"Particuliere beveiliging\s+Crebonr\.\s+(\d+)"
+        pattern = r"(?:Particuliere beveiliging|Beveiliging)\s+Crebonr\.\s+(\d+)"
         match = re.search(pattern, self.text_content)
         return match.group(1) if match else ""
+    
+    def _extract_naam_dossier(self) -> str:
+        """Extraheert de naam van het kwalificatiedossier."""
+        # Zoek naar de titel van het kwalificatiedossier
+        pattern = r"Kwalificatiedossier\s+([^\n]+?)(?:\s+Crebonr\.|\s+Geldig vanaf)"
+        match = re.search(pattern, self.text_content)
+        if match:
+            return match.group(1).strip()
+        
+        # Alternatieve methode als de eerste niet werkt
+        pattern = r"(?:Particuliere beveiliging|Beveiliging)\s+Crebonr\."
+        match = re.search(pattern, self.text_content)
+        if match:
+            return match.group(0).split("Crebonr.")[0].strip()
+        
+        return "Particuliere beveiliging"  # Fallback
     
     def _extract_crebonr_kwalificatie(self) -> str:
         """Extraheert het crebonummer van de kwalificatie."""
