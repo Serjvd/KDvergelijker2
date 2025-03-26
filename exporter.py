@@ -52,14 +52,37 @@ class ExcelExporter:
         excel_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.xlsx")
         csv_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.csv")
         
-        # Exporteer naar Excel - compatibel met verschillende pandas versies
-        with pd.ExcelWriter(excel_path) as writer:
-            df.to_excel(writer, index=False)
+        try:
+            # Poging 1: Gebruik ExcelWriter met engine specificatie
+            try:
+                with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Vergelijking')
+            except Exception as e1:
+                print(f"Eerste poging mislukt: {str(e1)}")
+                
+                # Poging 2: Directe export met engine specificatie
+                try:
+                    df.to_excel(excel_path, index=False, engine='openpyxl')
+                except Exception as e2:
+                    print(f"Tweede poging mislukt: {str(e2)}")
+                    
+                    # Poging 3: Gebruik xlsxwriter engine
+                    try:
+                        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
+                            df.to_excel(writer, index=False)
+                    except Exception as e3:
+                        print(f"Derde poging mislukt: {str(e3)}")
+                        
+                        # Fallback: Sla alleen op als CSV
+                        print("Excel export mislukt, alleen CSV wordt opgeslagen")
+        except Exception as e:
+            print(f"Excel export mislukt: {str(e)}")
+            print("Alleen CSV wordt opgeslagen")
         
-        # Exporteer naar CSV
+        # Exporteer naar CSV (dit zou altijd moeten werken)
         df.to_csv(csv_path, index=False, sep=';')
         
         return {
-            "excel": excel_path,
+            "excel": excel_path if os.path.exists(excel_path) else None,
             "csv": csv_path
         }
