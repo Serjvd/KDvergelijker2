@@ -52,8 +52,9 @@ class ExcelExporter:
         excel_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.xlsx")
         csv_path = os.path.join(self.output_dir, f"{prefix}_vergelijking.csv")
         
-        # Exporteer naar Excel
-        df.to_excel(excel_path, index=False)
+        # Exporteer naar Excel - compatibel met verschillende pandas versies
+        with pd.ExcelWriter(excel_path) as writer:
+            df.to_excel(writer, index=False)
         
         # Exporteer naar CSV
         df.to_csv(csv_path, index=False, sep=';')
