@@ -54,10 +54,13 @@ class PDFExtractor:
         if not self.text_content:
             self.extract_text()
             
+        naam_dossier = self._extract_naam_dossier()
+        print(f"GeÃ«xtraheerde naam dossier: {naam_dossier}")  # Debug print
+            
         metadata = {
             "filename": self.filename,
             "crebonr_dossier": self._extract_crebonr_dossier(),
-            "naam_dossier": self._extract_naam_dossier(),
+            "naam_dossier": naam_dossier,
             "crebonr_kwalificatie": self._extract_crebonr_kwalificatie(),
             "naam_kwalificatie": self._extract_naam_kwalificatie(),
             "versie": self._extract_versie(),
@@ -75,19 +78,29 @@ class PDFExtractor:
     
     def _extract_naam_dossier(self) -> str:
         """Extraheert de naam van het kwalificatiedossier."""
-        # Zoek naar de titel van het kwalificatiedossier
-        pattern = r"Kwalificatiedossier\s+([^\n]+?)(?:\s+Crebonr\.|\s+Geldig vanaf)"
-        match = re.search(pattern, self.text_content)
-        if match:
-            return match.group(1).strip()
+        # Probeer verschillende patronen om de naam te vinden
         
-        # Alternatieve methode als de eerste niet werkt
-        pattern = r"(?:Particuliere beveiliging|Beveiliging)\s+Crebonr\."
-        match = re.search(pattern, self.text_content)
-        if match:
-            return match.group(0).split("Crebonr.")[0].strip()
+        # Patroon 1: Zoek naar "Kwalificatiedossier" gevolgd door de naam
+        pattern1 = r"Kwalificatiedossier\s+([^\n]+?)(?:\s+Crebonr\.|\s+Geldig vanaf)"
+        match1 = re.search(pattern1, self.text_content)
+        if match1:
+            return match1.group(1).strip()
         
-        return "Particuliere beveiliging"  # Fallback
+        # Patroon 2: Zoek naar "Beveiliger" in de eerste 1000 tekens
+        first_1000_chars = self.text_content[:1000]
+        beveiliger_match = re.search(r'(Beveiliger\s*\d*)', first_1000_chars)
+        if beveiliger_match:
+            return beveiliger_match.group(1).strip()
+        
+        # Patroon 3: Extraheer uit bestandsnaam
+        if "beveiliger" in self.filename.lower():
+            # Verwijder extensie en eventuele "- oud" toevoegingen
+            base_name = os.path.splitext(self.filename)[0]
+            base_name = re.sub(r'\s*-\s*oud', '', base_name, flags=re.IGNORECASE)
+            return base_name.strip()
+        
+        # Fallback: Gebruik een generieke naam
+        return "Beveiliger"
     
     def _extract_crebonr_kwalificatie(self) -> str:
         """Extraheert het crebonummer van de kwalificatie."""
