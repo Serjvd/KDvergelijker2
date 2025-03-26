@@ -132,16 +132,14 @@ class PDFExtractor:
             self.extract_text()
             
         werkprocessen = []
-        # Patroon voor werkprocessen (B1-K1-W1, B1-K1-W2, etc.)
-        pattern = r"(B\d+-K\d+-W\d+):\s+([^\.]+)(?:\.+\s*\d+)?"
+        # Verbeterd patroon dat de naam scheidt van de omschrijving
+        pattern = r"(B\d+-K\d+-W\d+):\s+([^\.]+?)(?:\s*Omschrijving|\s*\.+\s*\d+)"
         matches = re.finditer(pattern, self.text_content)
         
         for match in matches:
             code = match.group(1)
-            # Verwijder puntjes en paginanummers uit de naam
+            # Neem alleen de naam, zonder omschrijving
             naam = match.group(2).strip()
-            # Verwijder eventuele resterende puntjes aan het einde
-            naam = re.sub(r'\s*\.+\s*$', '', naam)
             
             # Bepaal bij welke kerntaak dit werkproces hoort
             kerntaak_code = code.split('-W')[0]
@@ -223,6 +221,8 @@ class PDFExtractor:
             line = line.strip()
             # Verwijder puntjes en paginanummers
             line = re.sub(r'\s*\.+\s*\d+\s*$', '', line)
+            # Verwijder eventuele omschrijvingen
+            line = re.sub(r'\s*Omschrijving.*$', '', line)
             
             if line.startswith('â€¢') or line.startswith('*') or line.startswith('-'):
                 items.append(line.lstrip('â€¢*- ').strip())
