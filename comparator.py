@@ -13,12 +13,13 @@ class DossierComparator:
         Initialiseert de DossierComparator met data van het oude en nieuwe dossier.
         
         Args:
-            oud_data: Dictionary met geëxtraheerde data uit het oude dossier
-            nieuw_data: Dictionary met geëxtraheerde data uit het nieuwe dossier
+            oud_data: Dictionary met geÃ«xtraheerde data uit het oude dossier
+            nieuw_data: Dictionary met geÃ«xtraheerde data uit het nieuwe dossier
         """
         self.oud_data = oud_data
         self.nieuw_data = nieuw_data
         self.comparison_results = []
+        self.matched_werkprocessen = set()  # Houdt bij welke werkprocessen al gematcht zijn
         
     def compare_all(self) -> List[Dict]:
         """
@@ -29,6 +30,7 @@ class DossierComparator:
         """
         # Reset resultaten
         self.comparison_results = []
+        self.matched_werkprocessen = set()
         
         # Vergelijk metadata
         self._compare_metadata()
@@ -104,7 +106,7 @@ class DossierComparator:
             
             if code in oud_kerntaken and code in nieuw_kerntaken:
                 if oud_naam != nieuw_naam:
-                    impact = f"Naamswijziging van de kerntaak met meer nadruk op {self._identify_key_differences(oud_naam, nieuw_naam)}"
+                    impact = f"Naamswijziging van de kerntaak: {self._describe_text_change(oud_naam, nieuw_naam)}"
                 else:
                     impact = "Geen wijziging in naam of codering"
             elif code in oud_kerntaken:
@@ -129,75 +131,94 @@ class DossierComparator:
         oud_werkprocessen = {wp["code"]: wp for wp in self.oud_data["werkprocessen"]}
         nieuw_werkprocessen = {wp["code"]: wp for wp in self.nieuw_data["werkprocessen"]}
         
-        # Verzamel alle unieke codes
-        alle_codes = set(list(oud_werkprocessen.keys()) + list(nieuw_werkprocessen.keys()))
+        # Stap 1: Vergelijk werkprocessen met dezelfde code
+        for code in set(oud_werkprocessen.keys()).intersection(set(nieuw_werkprocessen.keys())):
+            oud_wp = oud_werkprocessen[code]
+            nieuw_wp = nieuw_werkprocessen[code]
+            
+            if oud_wp["naam"] != nieuw_wp["naam"]:
+                impact = f"Naamswijziging: {self._describe_text_change(oud_wp['naam'], nieuw_wp['naam'])}"
+            else:
+                impact = "Geen wijziging in naam of codering"
+            
+            self.comparison_results.append({
+                "codering_oud": code,
+                "naam_oud": oud_wp["naam"],
+                "codering_nieuw": code,
+                "naam_nieuw": nieuw_wp["naam"],
+                "impact": impact,
+                "pagina": "7-14"
+            })
+            
+            # Markeer deze werkprocessen als gematcht
+            self.matched_werkprocessen.add(code)
         
-        for code in sorted(alle_codes):
-            if code in oud_werkprocessen and code in nieuw_werkprocessen:
-                oud_naam = oud_werkprocessen[code]["naam"]
-                nieuw_naam = nieuw_werkprocessen[code]["naam"]
+        # Stap 2: Zoek naar werkprocessen die van codering zijn veranderd maar inhoudelijk hetzelfde zijn
+        # Maak lijsten van nog niet gematchte werkprocessen
+        unmatched_oud = {code: wp for code, wp in oud_werkprocessen.items() if code not in self.matched_werkprocessen}
+        unmatched_nieuw = {code: wp for code, wp in nieuw_werkprocessen.items() if code not in self.matched_werkprocessen}
+        
+        # Voor elk oud werkproces, zoek de beste match in de nieuwe werkprocessen
+        for oud_code, oud_wp in list(unmatched_oud.items()):
+            best_match_code = None
+            best_match_score = 0.0
+            best_match_naam = ""
+            
+            for nieuw_code, nieuw_wp in unmatched_nieuw.items():
+                # Bereken similariteitsscore tussen de namen
+                score = Levenshtein.ratio(oud_wp["naam"].lower(), nieuw_wp["naam"].lower())
                 
-                if oud_naam != nieuw_naam:
-                    impact = f"Naamswijziging van {self._identify_key_differences(oud_naam, nieuw_naam)}"
-                else:
-                    impact = "Geen wijziging in naam of codering"
+                # Als de score beter is dan de huidige beste match
+                if score > best_match_score and score > 0.6:  # Verlaagde drempelwaarde voor betere matching
+                    best_match_score = score
+                    best_match_code = nieuw_code
+                    best_match_naam = nieuw_wp["naam"]
+            
+            # Als een goede match is gevonden
+            if best_match_code:
+                impact = f"Werkproces heeft nieuwe codering gekregen: van {oud_code} naar {best_match_code}"
+                if oud_wp["naam"] != best_match_naam:
+                    impact += f". Naamswijziging: {self._describe_text_change(oud_wp['naam'], best_match_naam)}"
                 
                 self.comparison_results.append({
-                    "codering_oud": code,
-                    "naam_oud": oud_naam,
-                    "codering_nieuw": code,
-                    "naam_nieuw": nieuw_naam,
+                    "codering_oud": oud_code,
+                    "naam_oud": oud_wp["naam"],
+                    "codering_nieuw": best_match_code,
+                    "naam_nieuw": best_match_naam,
                     "impact": impact,
                     "pagina": "7-14"
                 })
-            elif code in oud_werkprocessen:
-                # Zoek of er een vergelijkbaar werkproces is in het nieuwe dossier
-                oud_wp = oud_werkprocessen[code]
-                best_match, similarity = self._find_best_match(oud_wp["naam"], 
-                                                              [wp["naam"] for wp in self.nieuw_data["werkprocessen"]])
                 
-                if similarity > 0.7:  # Als er een goede match is
-                    for new_code, new_wp in nieuw_werkprocessen.items():
-                        if new_wp["naam"] == best_match:
-                            impact = f"Werkproces heeft nieuwe codering gekregen: van {code} naar {new_code}"
-                            self.comparison_results.append({
-                                "codering_oud": code,
-                                "naam_oud": oud_wp["naam"],
-                                "codering_nieuw": new_code,
-                                "naam_nieuw": best_match,
-                                "impact": impact,
-                                "pagina": "7-14"
-                            })
-                            break
-                else:
-                    impact = "Werkproces verwijderd in het nieuwe dossier"
-                    self.comparison_results.append({
-                        "codering_oud": code,
-                        "naam_oud": oud_wp["naam"],
-                        "codering_nieuw": "-",
-                        "naam_nieuw": "-",
-                        "impact": impact,
-                        "pagina": "7-14"
-                    })
-            else:
-                # Nieuw werkproces dat niet in het oude dossier voorkomt
-                nieuw_wp = nieuw_werkprocessen[code]
-                best_match, similarity = self._find_best_match(nieuw_wp["naam"], 
-                                                              [wp["naam"] for wp in self.oud_data["werkprocessen"]])
+                # Markeer deze werkprocessen als gematcht
+                self.matched_werkprocessen.add(oud_code)
+                self.matched_werkprocessen.add(best_match_code)
                 
-                if similarity > 0.7:  # Als er een goede match is
-                    # Dit is waarschijnlijk al behandeld in de bovenstaande sectie
-                    pass
-                else:
-                    impact = "Nieuw werkproces toegevoegd in het nieuwe dossier"
-                    self.comparison_results.append({
-                        "codering_oud": "-",
-                        "naam_oud": "-",
-                        "codering_nieuw": code,
-                        "naam_nieuw": nieuw_wp["naam"],
-                        "impact": impact,
-                        "pagina": "7-14"
-                    })
+                # Verwijder de gematchte werkprocessen uit de unmatched lijsten
+                del unmatched_oud[oud_code]
+                del unmatched_nieuw[best_match_code]
+        
+        # Stap 3: Verwerk de overgebleven niet-gematchte werkprocessen
+        # Voeg de overgebleven oude werkprocessen toe als verwijderd
+        for oud_code, oud_wp in unmatched_oud.items():
+            self.comparison_results.append({
+                "codering_oud": oud_code,
+                "naam_oud": oud_wp["naam"],
+                "codering_nieuw": "-",
+                "naam_nieuw": "-",
+                "impact": "Werkproces verwijderd in het nieuwe dossier",
+                "pagina": "7-14"
+            })
+        
+        # Voeg de overgebleven nieuwe werkprocessen toe als toegevoegd
+        for nieuw_code, nieuw_wp in unmatched_nieuw.items():
+            self.comparison_results.append({
+                "codering_oud": "-",
+                "naam_oud": "-",
+                "codering_nieuw": nieuw_code,
+                "naam_nieuw": nieuw_wp["naam"],
+                "impact": "Nieuw werkproces toegevoegd in het nieuwe dossier",
+                "pagina": "7-14"
+            })
     
     def _compare_text_sections(self):
         """Vergelijkt de tekstuele secties zoals context, beroepshouding en resultaat."""
@@ -307,46 +328,48 @@ class DossierComparator:
         best_match, score = self._find_best_match(target, candidates)
         return score >= threshold
     
-    def _identify_key_differences(self, old_text: str, new_text: str) -> str:
+    def _describe_text_change(self, old_text: str, new_text: str) -> str:
         """
-        Identificeert de belangrijkste verschillen tussen twee teksten.
+        Geeft een duidelijke beschrijving van de wijzigingen tussen twee teksten.
         
         Args:
             old_text: Oude tekst
             new_text: Nieuwe tekst
             
         Returns:
-            Beschrijving van de belangrijkste verschillen
+            Beschrijving van de wijzigingen
         """
-        # Eenvoudige implementatie - kan worden uitgebreid met meer geavanceerde tekstanalyse
-        old_words = set(old_text.lower().split())
-        new_words = set(new_text.lower().split())
+        # Splits de teksten in woorden en verwijder stopwoorden
+        old_words = [w.lower() for w in old_text.split() if len(w) > 3]
+        new_words = [w.lower() for w in new_text.split() if len(w) > 3]
         
-        removed = old_words - new_words
-        added = new_words - old_words
+        # Identificeer toegevoegde en verwijderde woorden
+        added_words = [w for w in new_words if w not in old_words]
+        removed_words = [w for w in old_words if w not in new_words]
         
-        differences = []
+        # Maak een beschrijving van de wijzigingen
+        changes = []
         
-        if added:
-            key_additions = [word for word in added if len(word) > 3]
-            if key_additions:
-                differences.append(f"toevoeging van {', '.join(key_additions[:3])}")
+        if added_words:
+            # Beperk tot de 3 belangrijkste woorden
+            key_additions = added_words[:3]
+            changes.append(f"toevoeging van '{', '.join(key_additions)}'")
         
-        if removed:
-            key_removals = [word for word in removed if len(word) > 3]
-            if key_removals:
-                differences.append(f"verwijdering van {', '.join(key_removals[:3])}")
+        if removed_words:
+            # Beperk tot de 3 belangrijkste woorden
+            key_removals = removed_words[:3]
+            changes.append(f"verwijdering van '{', '.join(key_removals)}'")
         
-        if not differences:
-            # Als geen specifieke woorden zijn geïdentificeerd, geef een algemene beschrijving
-            if len(new_text) > len(old_text):
-                return "uitgebreidere beschrijving"
-            elif len(new_text) < len(old_text):
-                return "beknoptere beschrijving"
+        if not changes:
+            # Als geen specifieke woorden zijn geÃ¯dentificeerd
+            if len(new_text) > len(old_text) * 1.2:
+                return "uitgebreidere beschrijving met meer details"
+            elif len(new_text) < len(old_text) * 0.8:
+                return "beknoptere beschrijving met minder details"
             else:
-                return "herformulering zonder significante wijzigingen"
+                return "herformulering zonder significante inhoudelijke wijzigingen"
         
-        return " en ".join(differences)
+        return " en ".join(changes)
     
     def _analyze_text_differences(self, old_text: str, new_text: str, section_type: str) -> str:
         """
@@ -365,7 +388,7 @@ class DossierComparator:
         elif section_type == "beroepshouding":
             return "De nieuwe beroepshouding is uitgebreider beschreven met meer nadruk op \"slimme interventie\", vroegtijdig signaleren, security awareness, en sociale vaardigheden. Ook is er meer aandacht voor de balans tussen beveiligings- en faciliterende taken."
         elif section_type == "resultaat":
-            return "In het nieuwe dossier is het resultaat uitgebreider beschreven met nadruk op vroegtijdig signaleren van dreigingen en risico's, borgen van continuïteit van bedrijfsvoering, en bijdrage aan sociale en maatschappelijke veiligheid."
+            return "In het nieuwe dossier is het resultaat uitgebreider beschreven met nadruk op vroegtijdig signaleren van dreigingen en risico's, borgen van continuÃ¯teit van bedrijfsvoering, en bijdrage aan sociale en maatschappelijke veiligheid."
         else:
             return "Tekstuele wijzigingen zonder significante impact op de inhoud."
     
