@@ -1,5 +1,5 @@
 """
-Module voor het vergelijken van twee kwalificatiedossiers met verbeterde werkprocesherkenning.
+Module voor het vergelijken van twee kwalificatiedossiers met verbeterde werkprocesherkenning en deduplicatie.
 """
 import re
 from typing import Dict, List, Tuple, Any
@@ -21,6 +21,7 @@ class DossierComparator:
         self.comparison_results = []
         self.matched_oud_werkprocessen = set()  # Houdt bij welke oude werkprocessen al gematcht zijn
         self.matched_nieuw_werkprocessen = set()  # Houdt bij welke nieuwe werkprocessen al gematcht zijn
+        self.processed_combinations = set()  # Houdt bij welke combinaties van oud/nieuw codes al zijn verwerkt
         
     def compare_all(self) -> List[Dict]:
         """
@@ -33,6 +34,7 @@ class DossierComparator:
         self.comparison_results = []
         self.matched_oud_werkprocessen = set()
         self.matched_nieuw_werkprocessen = set()
+        self.processed_combinations = set()
         
         # Vergelijk metadata
         self._compare_metadata()
@@ -49,7 +51,33 @@ class DossierComparator:
         # Vergelijk vakkennis en vaardigheden
         self._compare_vakkennis_vaardigheden()
         
+        # Verwijder dubbele vermeldingen
+        self._remove_duplicates()
+        
         return self.comparison_results
+    
+    def _remove_duplicates(self):
+        """Verwijdert dubbele vermeldingen uit de vergelijkingsresultaten."""
+        # Gebruik een set om unieke combinaties bij te houden
+        unique_entries = set()
+        unique_results = []
+        
+        for result in self.comparison_results:
+            # Maak een tuple van de belangrijkste velden om uniekheid te bepalen
+            entry_key = (
+                result.get("codering_oud", ""),
+                result.get("naam_oud", ""),
+                result.get("codering_nieuw", ""),
+                result.get("naam_nieuw", "")
+            )
+            
+            # Als deze combinatie nog niet is gezien, voeg toe aan de unieke resultaten
+            if entry_key not in unique_entries:
+                unique_entries.add(entry_key)
+                unique_results.append(result)
+        
+        # Vervang de resultaten door de unieke resultaten
+        self.comparison_results = unique_results
     
     def _compare_metadata(self):
         """Vergelijkt de metadata van beide dossiers."""
@@ -168,6 +196,10 @@ class DossierComparator:
                     oud_code = oud_wp["code"]
                     nieuw_code = nieuw_wp["code"]
                     
+                    # Controleer of deze combinatie al is verwerkt
+                    if (oud_code, nieuw_code) in self.processed_combinations:
+                        continue
+                    
                     if oud_code == nieuw_code:
                         impact = "Geen wijziging in naam of codering"
                     else:
@@ -182,9 +214,10 @@ class DossierComparator:
                         "pagina": "7-14"
                     })
                     
-                    # Markeer als gematcht
+                    # Markeer als gematcht en verwerkt
                     self.matched_oud_werkprocessen.add(oud_code)
                     self.matched_nieuw_werkprocessen.add(nieuw_code)
+                    self.processed_combinations.add((oud_code, nieuw_code))
                     break  # Ga naar het volgende oude werkproces
         
         # STAP 2: Zoek naar patronen van verschuiving in codering
@@ -217,6 +250,10 @@ class DossierComparator:
                 if nieuw_code in nieuw_wp_by_code and nieuw_code not in self.matched_nieuw_werkprocessen:
                     nieuw_wp = nieuw_wp_by_code[nieuw_code]
                     
+                    # Controleer of deze combinatie al is verwerkt
+                    if (oud_wp["code"], nieuw_code) in self.processed_combinations:
+                        continue
+                    
                     # Bereken similariteit
                     similarity = Levenshtein.ratio(oud_wp["naam"].lower(), nieuw_wp["naam"].lower())
                     
@@ -237,9 +274,10 @@ class DossierComparator:
                             "pagina": "7-14"
                         })
                         
-                        # Markeer als gematcht
+                        # Markeer als gematcht en verwerkt
                         self.matched_oud_werkprocessen.add(oud_wp["code"])
                         self.matched_nieuw_werkprocessen.add(nieuw_code)
+                        self.processed_combinations.add((oud_wp["code"], nieuw_code))
                         break  # Ga naar het volgende oude werkproces
         
         # STAP 3: Voor de resterende werkprocessen, zoek de beste match op basis van tekstuele overeenkomst
@@ -254,6 +292,10 @@ class DossierComparator:
                 if nieuw_wp["code"] in self.matched_nieuw_werkprocessen:
                     continue
                     
+                # Controleer of deze combinatie al is verwerkt
+                if (oud_wp["code"], nieuw_wp["code"]) in self.processed_combinations:
+                    continue
+                
                 score = Levenshtein.ratio(oud_wp["naam"].lower(), nieuw_wp["naam"].lower())
                 
                 if score > best_score:
@@ -276,9 +318,10 @@ class DossierComparator:
                     "pagina": "7-14"
                 })
                 
-                # Markeer als gematcht
+                # Markeer als gematcht en verwerkt
                 self.matched_oud_werkprocessen.add(oud_wp["code"])
                 self.matched_nieuw_werkprocessen.add(best_match["code"])
+                self.processed_combinations.add((oud_wp["code"], best_match["code"]))
             else:
                 # Geen match gevonden, werkproces is verwijderd
                 self.comparison_results.append({
