@@ -27,7 +27,7 @@ class PDFExtractor:
         Extraheert alle tekst uit het PDF-bestand.
         
         Returns:
-            De geëxtraheerde tekst als string
+            De geÃ«xtraheerde tekst als string
         """
         text = ""
         try:
@@ -80,7 +80,7 @@ class PDFExtractor:
     
     def _extract_naam_kwalificatie(self) -> str:
         """Extraheert de naam van de kwalificatie."""
-        pattern = r"»\s+(Beveiliger\s*\d*)\s*\(Crebonr"
+        pattern = r"Â»\s+(Beveiliger\s*\d*)\s*\(Crebonr"
         match = re.search(pattern, self.text_content)
         return match.group(1) if match else ""
     
@@ -133,12 +133,16 @@ class PDFExtractor:
             
         werkprocessen = []
         # Patroon voor werkprocessen (B1-K1-W1, B1-K1-W2, etc.)
-        pattern = r"(B\d+-K\d+-W\d+):\s+([^\n]+)"
+        pattern = r"(B\d+-K\d+-W\d+):\s+([^\.]+)(?:\.+\s*\d+)?"
         matches = re.finditer(pattern, self.text_content)
         
         for match in matches:
             code = match.group(1)
-            naam = match.group(2)
+            # Verwijder puntjes en paginanummers uit de naam
+            naam = match.group(2).strip()
+            # Verwijder eventuele resterende puntjes aan het einde
+            naam = re.sub(r'\s*\.+\s*$', '', naam)
+            
             # Bepaal bij welke kerntaak dit werkproces hoort
             kerntaak_code = code.split('-W')[0]
             werkprocessen.append({
@@ -217,8 +221,11 @@ class PDFExtractor:
         items = []
         for line in content.split('\n'):
             line = line.strip()
-            if line.startswith('•') or line.startswith('*') or line.startswith('-'):
-                items.append(line.lstrip('•*- ').strip())
+            # Verwijder puntjes en paginanummers
+            line = re.sub(r'\s*\.+\s*\d+\s*$', '', line)
+            
+            if line.startswith('â€¢') or line.startswith('*') or line.startswith('-'):
+                items.append(line.lstrip('â€¢*- ').strip())
             elif line.startswith('heeft') or line.startswith('kan'):
                 items.append(line.strip())
                 
